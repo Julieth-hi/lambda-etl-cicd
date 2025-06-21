@@ -1,0 +1,73 @@
+
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Lambda ETL triggered by CSV upload in S3
+
+Resources:
+  SourceBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: source-bucket1-etl
+
+  TargetBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: target-bucket1-etl
+
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: lambda-etl-csv-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: S3AccessPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: "*"
+
+  LambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: lambda-etl-csv
+      Handler: index.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+          s3 = boto3.client('s3')
+          def lambda_handler(event, context):
+              bucket_origen = 'source-bucket1-etl'
+              bucket_destino = 'target-bucket1-etl'
+              archivo_csv = event['Records'][0]['s3']['object']['key']
+              response = s3.get_object(Bucket=bucket_origen, Key=archivo_csv)
+              contenido = response['Body'].read().decode('utf-8')
+              lineas = contenido.split('\n')
+              lineas_procesadas = [linea.upper() for linea in lineas]
+              nuevo_contenido = '\n'.join(lineas_procesadas)
+              nuevo_nombre = 'procesado_' + archivo_csv.split('/')[-1]
+              s3.put_object(Bucket=bucket_destino, Key=nuevo_nombre, Body=nuevo_contenido)
+              return {'statusCode': 200, 'body': 'Transformado'}
+      Runtime: python3.9
+      Timeout: 10
+
+  LambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref LambdaFunction
+      Action: lambda:InvokeFunction
+      Principal: s3.amazonaws.com
+      SourceArn: !GetAtt SourceBucket.Arn
